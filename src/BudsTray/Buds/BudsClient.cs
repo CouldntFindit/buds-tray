@@ -238,7 +238,7 @@ public sealed class BudsClient : IDisposable
 
         var match = await FindSppServiceAsync(device, BluetoothCacheMode.Uncached, ct).ConfigureAwait(false)
                     ?? throw new InvalidOperationException(
-                        "No Galaxy Buds SPP service was found. Open the case, make sure the Buds are awake and paired, then click Reconnect.");
+                        "No Galaxy Buds SPP service was found. Open the case and make sure the Buds are awake and paired; BudsTray keeps retrying.");
 
         _service = match.Service;
         _transport = match.Transport;
@@ -380,7 +380,7 @@ public sealed class BudsClient : IDisposable
         // until the earbuds are awake.
         return candidates.FirstOrDefault(d => d.Name.Contains("Buds", StringComparison.OrdinalIgnoreCase))
                ?? throw new InvalidOperationException(
-                   "No paired Galaxy Buds found. Pair them in Windows Settings > Bluetooth, then click Reconnect.");
+                   "No paired Galaxy Buds found. Pair them in Windows Settings > Bluetooth; BudsTray keeps retrying.");
     }
 
     /// <summary>
@@ -651,7 +651,7 @@ public sealed class BudsClient : IDisposable
         return hr switch
         {
             0x80072740 => "The Galaxy Buds app is using the connection. BudsTray will reconnect when the channel is free.",
-            0x80070490 => "The Buds' SPP server is unavailable. Put both buds in the case, close it, then reopen and reconnect.",
+            0x80070490 => "The Buds' SPP server is unavailable. Put both buds in the case, close it, then reopen it.",
             _ => ex.Message
         };
     }
