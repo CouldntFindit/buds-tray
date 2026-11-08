@@ -7,6 +7,13 @@ BudsTray sits in the notification area and shows left, right and case levels in
 the tooltip and the right-click menu. It reconnects automatically when the buds
 return.
 
+## Download
+
+Download `BudsTray.exe` from the
+[latest release](https://github.com/CouldntFindit/buds-tray/releases/latest) and
+run it. The .NET 10 Desktop Runtime is required. Settings and the log live in a
+`data` folder next to the executable.
+
 ## Supported models
 
 Galaxy Buds (2019), Buds+, Buds Live, Buds Pro, Buds2, Buds2 Pro, Buds FE,
