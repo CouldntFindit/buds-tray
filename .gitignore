@@ -1,0 +1,21 @@
+# Build output
+bin/
+obj/
+publish/
+artifacts/
+TestResults/
+
+# Local NuGet cache (Directory.Build.props keeps packages in .packages)
+.packages/
+
+# Runtime data: logs, config, remembered device
+data/
+*.log
+
+# IDE and user-specific files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
