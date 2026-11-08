@@ -78,32 +78,6 @@ public static class GalaxyBudsApp
         return open;
     }
 
-    /// <summary>True when either background process of the official app is running.</summary>
-    public static bool IsRunning()
-    {
-        foreach (var name in ProcessNames)
-        {
-            try
-            {
-                var processes = Process.GetProcessesByName(name);
-                try
-                {
-                    if (processes.Any(IsGalaxyBudsProcess)) return true;
-                }
-                finally
-                {
-                    foreach (var process in processes) process.Dispose();
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"Could not inspect {name}", ex);
-            }
-        }
-
-        return false;
-    }
-
     /// <summary>
     /// Stops the official app's background processes so the SPP channel becomes
     /// free. Returns the process names that were actually stopped. Safe to call

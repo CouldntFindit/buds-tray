@@ -14,9 +14,4 @@
     <Version>0.1.0</Version>
   </PropertyGroup>
 
-  <ItemGroup>
-    <EmbeddedResource Include="Assets\Buds\*.png"
-                      LogicalName="BudsTray.Assets.Buds.%(Filename)%(Extension)" />
-  </ItemGroup>
-
 </Project>

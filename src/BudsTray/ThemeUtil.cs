@@ -27,11 +27,4 @@ public static class ThemeUtil
         AppTheme.Dark => false,
         _ => IsLightTheme()
     };
-
-    public static string DisplayName(AppTheme theme) => theme switch
-    {
-        AppTheme.Light => "Light",
-        AppTheme.Dark => "Dark",
-        _ => "System"
-    };
 }

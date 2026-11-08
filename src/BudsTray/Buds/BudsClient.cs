@@ -72,7 +72,6 @@ public sealed class BudsClient : IDisposable
     /// <summary>Last known noise-control mode, or null until the buds report one.</summary>
     public NoiseControlMode? NoiseMode { get; private set; }
     public string? DeviceName { get; private set; }
-    public string? LastError { get; private set; }
 
     /// <summary>
     /// True while the SPP channel is held by another app (normally the official
@@ -124,12 +123,6 @@ public sealed class BudsClient : IDisposable
         Start();
     }
 
-    public async Task RestartAsync()
-    {
-        await StopAsync();
-        Start();
-    }
-
     public async Task StopAsync()
     {
         CancellationTokenSource? cts;
@@ -175,7 +168,6 @@ public sealed class BudsClient : IDisposable
             {
                 var message = Describe(ex);
                 var busy = HResultOf(ex) == 0x80072740;
-                LastError = message;
 
                 // A channel held by the Samsung app is a normal coexistence
                 // state, not a failure: log the transition once and stay quiet
@@ -261,7 +253,6 @@ public sealed class BudsClient : IDisposable
         _writer = new DataWriter(_socket.OutputStream);
         _readStream = _socket.InputStream.AsStreamForRead();
 
-        LastError = null;
         ChannelBusy = false;
         SetState(ConnectionState.Connected, null);
         Log.Info("Connected");

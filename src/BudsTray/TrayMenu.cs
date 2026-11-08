@@ -6,10 +6,10 @@ using BudsTray.Buds;
 namespace BudsTray;
 
 /// <summary>
-/// The simple tray menu used while the full card menu is parked: Left, Right and
-/// Case percentages, the sound modes the connected model supports, and Exit. It
-/// is a plain <see cref="ContextMenuStrip"/> with a custom renderer so it can
-/// follow the app theme instead of always drawing the light system chrome.
+/// The tray menu: Left, Right and Case percentages, the sound modes the
+/// connected model supports, and Exit. It is a plain
+/// <see cref="ContextMenuStrip"/> with a custom renderer so it can follow the
+/// app theme instead of always drawing the light system chrome.
 /// </summary>
 internal sealed class TrayMenu : ContextMenuStrip
 {

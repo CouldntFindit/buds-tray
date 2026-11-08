@@ -23,10 +23,6 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly System.Windows.Forms.Timer _appWindowTimer;
     private readonly UserPreferenceChangedEventHandler _preferenceHandler;
 
-    // Parked fork: the full Galaxy Buds card menu. It stays compiled and ready
-    // but is not wired to the tray icon while the simple context menu is in use.
-    private BudsPopupForm? _popup;
-    private DateTime _popupClosedAt;
     private string? _lastIconKey;
     private string? _lastTooltip;
     private bool _galaxyBudsWindowOpen;
@@ -112,59 +108,6 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    private PopupSnapshot BuildSnapshot()
-    {
-        var name = _client.DeviceName ?? _config.DeviceName ?? "Galaxy Buds";
-
-        return new PopupSnapshot(
-            _client.State,
-            name,
-            _client.LastStatus,
-            _client.LastError,
-            IsSamsungBudsAppRunning());
-    }
-
-    /// <summary>
-    /// Parked fork: opens the full Galaxy Buds card menu. Reattach it to a tray
-    /// click when the card is brought back; the simple <see cref="TrayMenu"/>
-    /// only shows battery rows and Exit for now.
-    /// </summary>
-    private void ShowPopup()
-    {
-        if (_popup is { IsDisposed: false })
-        {
-            _popup.Close();
-            _popup = null;
-            return;
-        }
-
-        // Right-clicking the tray icon while the popup is open deactivates and
-        // closes it; the same click then raises MouseUp. Ignore that echo so the
-        // card does not immediately reopen.
-        if ((DateTime.UtcNow - _popupClosedAt).TotalMilliseconds < 350) return;
-
-        var popup = new BudsPopupForm(
-            BuildSnapshot,
-            _config,
-            reconnect: () => _ = _client.RestartAsync(),
-            exit: ExitApplication,
-            closeSamsung: CloseSamsungBudsApp,
-            iconOptionsChanged: () =>
-            {
-                _lastIconKey = null;
-                RefreshUi();
-            });
-
-        popup.FormClosed += (_, _) =>
-        {
-            _popupClosedAt = DateTime.UtcNow;
-            if (ReferenceEquals(_popup, popup)) _popup = null;
-        };
-
-        _popup = popup;
-        popup.ShowNearCursor();
-    }
-
     private void RefreshUi()
     {
         var light = ThemeUtil.IsLightTheme();
@@ -205,8 +148,6 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         if (_menu.Visible) _menu.RefreshValues();
-
-        _popup?.RefreshData();
     }
 
     private string BuildTooltip(bool connected, BatteryStatus? status)
@@ -275,33 +216,10 @@ public sealed class TrayApplicationContext : ApplicationContext
         Post(RefreshUi);
     }
 
-    private static bool IsSamsungBudsAppRunning() => GalaxyBudsApp.IsRunning();
-
-    private void CloseSamsungBudsApp()
-    {
-        var answer = MessageBox.Show(
-            "The official Samsung Galaxy Buds app is holding the Bluetooth manager channel. " +
-            "Close its background processes so BudsTray can connect?",
-            "BudsTray",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question);
-
-        if (answer != DialogResult.Yes) return;
-
-        var stopped = GalaxyBudsApp.Stop();
-        Log.Info(stopped.Count == 0
-            ? "The official Galaxy Buds app was not running."
-            : $"Closed the official Galaxy Buds app ({string.Join(", ", stopped)}).");
-
-        _ = _client.RestartAsync();
-    }
-
     private void ExitApplication()
     {
         _pollTimer.Stop();
         _appWindowTimer.Stop();
-        _popup?.Close();
-        _popup = null;
         _notifyIcon.Visible = false;
         ExitThread();
     }
@@ -315,9 +233,6 @@ public sealed class TrayApplicationContext : ApplicationContext
             _pollTimer.Dispose();
             _appWindowTimer.Stop();
             _appWindowTimer.Dispose();
-            _popup?.Close();
-            _popup?.Dispose();
-            _popup = null;
             _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
             _marshal.Dispose();

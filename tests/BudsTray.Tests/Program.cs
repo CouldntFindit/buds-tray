@@ -59,13 +59,8 @@ placementPayload[6] = 0x33; // both in the case
 var bothInCase = BatteryStatus.FromFrame(new SppFrame(MsgIds.ExtendedStatusUpdated, placementPayload, false));
 Check("placement 0x33 is not single-bud", bothInCase is { LeftPresent: false, RightPresent: false, IsSingleBud: false });
 
-// The ear type byte selects the product render shown in the popup.
+// The ear type byte identifies the model, which selects the supported modes.
 Check("extended frame carries ear type", status?.EarType == 6, status?.EarType?.ToString());
-Check("ear type 6 maps to Buds FE", BudsArt.ModelName(6, null) == "Galaxy Buds FE");
-Check("ear type 8 maps to Buds3", BudsArt.ModelName(8, null) == "Galaxy Buds3");
-Check("unknown ear type falls back to the device name",
-    BudsArt.ModelName(null, "Galaxy Buds2 Pro") == "Galaxy Buds2 Pro");
-Check("unknown model has no label", BudsArt.ModelName(null, "TOYOTA Corolla") is null);
 
 // STATUS_UPDATED payload[0] is a revision on newer models, not the ear type.
 var legacyStatusPayload = new byte[8];
@@ -522,9 +517,6 @@ using (var emptySingle = TrayIconRenderer.Render(
 if (args.Contains("--icons"))
     return RenderIconSheet();
 
-if (args.Contains("--popup"))
-    return RenderPopupPreview();
-
 if (args.Contains("--menu"))
     return RenderMenuPreview();
 
@@ -751,7 +743,7 @@ static int RenderIconSheet()
 
 static int RenderMenuPreview()
 {
-    var outDirectory = Path.Combine(FindRepoRoot(), "artifacts", "popup");
+    var outDirectory = Path.Combine(FindRepoRoot(), "artifacts", "menu");
     Directory.CreateDirectory(outDirectory);
 
     var statuses = new[]
@@ -811,98 +803,6 @@ static int RenderMenuPreview()
     }
 
     Console.WriteLine("Wrote tray-menu-dark.png, tray-menu-light.png, the -nocase and -adaptive variants");
-    return 0;
-}
-
-static int RenderPopupPreview()
-{
-    var outDirectory = Path.Combine(FindRepoRoot(), "artifacts", "popup");
-    Directory.CreateDirectory(outDirectory);
-
-    var status = new BatteryStatus(
-        58, 89, 26, false, false, false, DateTimeOffset.Now, EarType: 6);
-    var snapshot = new PopupSnapshot(ConnectionState.Connected, "TOYOTA Corolla", status, null, false);
-
-    var variants = new[] { ("Dark", AppTheme.Dark), ("Light", AppTheme.Light) };
-    var images = new List<(string Label, Bitmap Bitmap)>();
-
-    foreach (var (name, theme) in variants)
-    {
-        var config = new AppConfig { Theme = theme };
-        using var form = new BudsPopupForm(
-            () => snapshot, config,
-            reconnect: () => { }, exit: () => { }, closeSamsung: () => { }, iconOptionsChanged: () => { });
-
-        form.CreateControl();
-
-        using (var main = new Bitmap(form.Width, form.Height))
-        {
-            form.DrawToBitmap(main, new Rectangle(0, 0, form.Width, form.Height));
-            main.Save(Path.Combine(outDirectory, $"popup-{name.ToLowerInvariant()}.png"), ImageFormat.Png);
-            images.Add(($"{name} · main", new Bitmap(main)));
-        }
-
-        form.NavigateToSettings();
-
-        using (var settings = new Bitmap(form.Width, form.Height))
-        {
-            form.DrawToBitmap(settings, new Rectangle(0, 0, form.Width, form.Height));
-            settings.Save(Path.Combine(outDirectory, $"popup-{name.ToLowerInvariant()}-settings.png"), ImageFormat.Png);
-            images.Add(($"{name} · settings", new Bitmap(settings)));
-        }
-    }
-
-    // Extra shot: single-bud mode, where the gauge follows only the bud in use.
-    var singleStatus = new BatteryStatus(
-        58, 89, 26, false, false, false, DateTimeOffset.Now,
-        LeftPresent: true, RightPresent: false, EarType: 6);
-    var singleSnapshot = new PopupSnapshot(
-        ConnectionState.Connected, "TOYOTA Corolla", singleStatus, null, false);
-
-    using (var form = new BudsPopupForm(
-        () => singleSnapshot, new AppConfig { Theme = AppTheme.Dark },
-        reconnect: () => { }, exit: () => { }, closeSamsung: () => { }, iconOptionsChanged: () => { }))
-    {
-        form.CreateControl();
-
-        using var main = new Bitmap(form.Width, form.Height);
-        form.DrawToBitmap(main, new Rectangle(0, 0, form.Width, form.Height));
-        main.Save(Path.Combine(outDirectory, "popup-dark-single-bud.png"), ImageFormat.Png);
-        images.Add(("Dark · single bud (left)", new Bitmap(main)));
-    }
-
-    const int margin = 24;
-    const int labelHeight = 26;
-    var cellWidth = images.Max(i => i.Bitmap.Width);
-    var cellHeight = images.Max(i => i.Bitmap.Height);
-    var rows = (images.Count + 1) / 2;
-    var sheetWidth = margin * 2 + cellWidth * 2 + margin;
-    var sheetHeight = margin + (cellHeight + labelHeight) * rows + margin;
-
-    using var sheet = new Bitmap(sheetWidth, sheetHeight);
-    using var g = Graphics.FromImage(sheet);
-    g.Clear(Color.FromArgb(255, 18, 18, 18));
-
-    using var font = new Font("Segoe UI", 13f, FontStyle.Bold, GraphicsUnit.Pixel);
-    using var brush = new SolidBrush(Color.White);
-
-    for (var i = 0; i < images.Count; i++)
-    {
-        var column = i % 2;
-        var row = i / 2;
-        var x = margin + column * (cellWidth + margin);
-        var y = margin + row * (cellHeight + labelHeight + margin);
-
-        g.DrawImage(images[i].Bitmap, x, y);
-        g.DrawString(images[i].Label, font, brush, x, y + cellHeight + 4);
-    }
-
-    var sheetPath = Path.Combine(outDirectory, "popup-preview.png");
-    sheet.Save(sheetPath, ImageFormat.Png);
-
-    foreach (var image in images) image.Bitmap.Dispose();
-
-    Console.WriteLine($"Wrote {sheetPath}");
     return 0;
 }
 
