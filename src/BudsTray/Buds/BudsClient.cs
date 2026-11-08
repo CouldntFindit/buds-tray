@@ -98,8 +98,10 @@ public sealed class BudsClient : IDisposable
         {
             if (PausedForGalaxyBudsApp) return;
             if (_loop != null) return;
-            _cts = new CancellationTokenSource();
-            _loop = Task.Run(() => RunAsync(_cts.Token));
+
+            var cts = new CancellationTokenSource();
+            _cts = cts;
+            _loop = Task.Run(() => RunAsync(cts.Token));
         }
     }
 
@@ -368,12 +370,16 @@ public sealed class BudsClient : IDisposable
         {
             ct.ThrowIfCancellationRequested();
 
-            var cached = await FindSppServiceAsync(device, BluetoothCacheMode.Cached, ct).ConfigureAwait(false);
-            var match = cached ?? await FindSppServiceAsync(device, BluetoothCacheMode.Uncached, ct).ConfigureAwait(false);
+            var match = await FindSppServiceAsync(device, BluetoothCacheMode.Cached, ct).ConfigureAwait(false);
+            match ??= await FindSppServiceAsync(device, BluetoothCacheMode.Uncached, ct).ConfigureAwait(false);
+
             Log.Info($"SPP check on {device.Name}: {(match is null ? "none" : match.Value.Uuid.ToString())}");
 
-            if (match != null)
+            if (match is { } found)
             {
+                // This lookup only decides whether the device is a pair of Buds;
+                // ConnectAndReadAsync opens its own service for the real connection.
+                found.Service.Dispose();
                 Log.Info($"Selected {device.Name} ({device.BluetoothAddress:X12})");
                 return device;
             }
@@ -390,35 +396,90 @@ public sealed class BudsClient : IDisposable
     /// Looks for any known Galaxy Buds SPP service on the device. All generations
     /// expose one of these UUIDs, and the matched UUID also selects the frame
     /// layout used by the original Buds.
+    ///
+    /// Every service that is not handed back to the caller is disposed here:
+    /// Bluetooth discovery runs again on every reconnect attempt, and leaving the
+    /// WinRT wrappers to the finalizer would keep native handles around while the
+    /// buds are asleep.
     /// </summary>
     private static async Task<(RfcommDeviceService Service, Guid Uuid, SppTransport Transport)?> FindSppServiceAsync(
         BluetoothDevice device,
         BluetoothCacheMode cacheMode,
         CancellationToken ct)
     {
+        var query = device.GetRfcommServicesAsync(cacheMode).AsTask();
+        RfcommDeviceServicesResult result;
         try
         {
-            var result = await WithTimeout(
-                device.GetRfcommServicesAsync(cacheMode).AsTask(),
-                5, $"SPP service query ({cacheMode})", ct).ConfigureAwait(false);
-
-            foreach (var service in result.Services)
-            {
-                var uuid = service.ServiceId.Uuid;
-                var candidate = ServiceCandidates.FirstOrDefault(c => c.Uuid == uuid);
-                if (candidate != null) return (service, candidate.Uuid, candidate.Transport);
-            }
+            result = await WithTimeout(query, 5, $"SPP service query ({cacheMode})", ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            DisposeWhenFinished(query);
             throw;
         }
         catch
         {
             // The device may be asleep; the caller retries or falls back to the name.
+            // A query that already started can still complete, so release its result.
+            DisposeWhenFinished(query);
+            return null;
         }
 
-        return null;
+        (RfcommDeviceService Service, Guid Uuid, SppTransport Transport)? match = null;
+        foreach (var service in result.Services)
+        {
+            if (match is null)
+            {
+                try
+                {
+                    var uuid = service.ServiceId.Uuid;
+                    var candidate = ServiceCandidates.FirstOrDefault(c => c.Uuid == uuid);
+                    if (candidate != null)
+                    {
+                        match = (service, candidate.Uuid, candidate.Transport);
+                        continue;
+                    }
+                }
+                catch
+                {
+                    // An unreadable service id is not a Buds service.
+                }
+            }
+
+            try { service.Dispose(); } catch { }
+        }
+
+        return match;
+    }
+
+    /// <summary>Releases the services of a discovery query that finishes after it was abandoned.</summary>
+    private static void DisposeWhenFinished(Task<RfcommDeviceServicesResult> query)
+    {
+        _ = query.ContinueWith(
+            finished =>
+            {
+                try
+                {
+                    if (finished.Status != TaskStatus.RanToCompletion) return;
+
+                    foreach (var service in finished.Result.Services)
+                    {
+                        try { service.Dispose(); } catch { }
+                    }
+                }
+                catch
+                {
+                    // Nothing left to do with a result nobody is waiting for.
+                }
+                finally
+                {
+                    _ = finished.Exception; // observe; the caller already handled the failure
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private static async Task<T> WithTimeout<T>(Task<T> task, int seconds, string operation, CancellationToken ct)
@@ -478,10 +539,22 @@ public sealed class BudsClient : IDisposable
     /// </summary>
     public async Task RequestStatusAsync()
     {
-        if (_transport == SppTransport.Legacy)
-            await SendManagerInfoAsync().ConfigureAwait(false);
-        else
-            await SendMessageAsync(MsgIds.DebugGetAllData).ConfigureAwait(false);
+        // The 15 s poll keeps ticking while the app is connecting, disconnected
+        // or paused for the official app; there is nothing to ask then.
+        if (State != ConnectionState.Connected) return;
+
+        try
+        {
+            if (_transport == SppTransport.Legacy)
+                await SendManagerInfoAsync().ConfigureAwait(false);
+            else
+                await SendMessageAsync(MsgIds.DebugGetAllData).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // The connection can drop between the check and the write.
+            Log.Error("Could not poll the battery", ex);
+        }
     }
 
     /// <summary>
