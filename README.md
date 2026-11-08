@@ -2,28 +2,27 @@
 
 A little tray app for Windows that shows the battery of Samsung Galaxy Buds.
 
-It sits in the notification area and shows the left, right and case levels in
-the tooltip and the right-click menu. It reconnects on its own when the buds
-come back.
+It lives in the system tray and shows the left, right and case levels in the
+tooltip and the right-click menu. It reconnects on its own when the buds come
+back.
 
 ## Which buds it works with
 
 Galaxy Buds (2019), Buds+, Buds Live, Buds Pro, Buds2, Buds2 Pro, Buds FE,
 Buds Core, Buds3, Buds3 Pro, Buds3 FE, Buds4 and Buds4 Pro.
 
-Only Buds FE has been tested on real hardware. The rest use the protocol tables
-from GalaxyBudsClient, so they should work, but I couldn't try them myself.
+I only had a Buds FE to test with. The other models follow GalaxyBudsClient's
+protocol tables, so they should work but haven't been tried on real buds.
 
 ## What you need
 
 Windows 10 build 19041 or newer, and the buds paired in **Settings → Bluetooth
-& devices**. The published exe needs the .NET 10 desktop runtime; building from
+& devices**. The published exe needs the .NET 10 Desktop Runtime; building from
 source needs the .NET 10 SDK.
 
 ## Build and run
 
 ```powershell
-dotnet build .\src\BudsTray\BudsTray.csproj -c Release
 dotnet run --project .\src\BudsTray\BudsTray.csproj -c Release
 ```
 
@@ -46,8 +45,8 @@ dotnet run --project .\tests\BudsTray.Tests\BudsTray.Tests.csproj -c Release
 Hover the icon to see the battery, for example `L 80% · R 75% · Case 40%`.
 Right-click for the levels, the sound modes your model supports, and **Exit**.
 
-The icon turns red at 15 % or lower. If only one bud is out of the case it shows
-just that bud, and it shows a slash while disconnected.
+At 15% or lower the icon turns red. If your buds report placement and only one
+is out of the case, the icon shows just that bud. A slash means disconnected.
 
 ## Samsung's own app
 
@@ -68,7 +67,8 @@ The app creates `data\config.json` next to the exe. The useful bits:
 - `ShowPercentage` – put the percentage in the tray icon.
 - `Theme` – `System`, `Light` or `Dark` for the menu.
 
-Logs go to `data\budstray.log`.
+Logs go to `data\budstray.log`. Exit the app before editing the file, then
+start it again.
 
 ## Problems
 
@@ -77,11 +77,13 @@ Logs go to `data\budstray.log`.
 - **Case shows `--`:** the case only reports while it's awake and nearby.
 - **No sound modes:** they show up once the buds report their model. Adaptive is
   only on Buds3 Pro, Buds4 and Buds4 Pro.
-- **No icon after login:** put a shortcut to `BudsTray.exe` in `shell:startup`.
+- **No icon after login:** make a shortcut to `BudsTray.exe` in the startup
+  folder (press Win+R, type `shell:startup`, and put it in the folder that
+  opens).
 - **Renamed buds:** fine, detection doesn't use the name.
 
 ## Credits
 
-The protocol was figured out by
-[GalaxyBudsClient](https://github.com/timschneeb/GalaxyBudsClient) (GPL-3.0).
-BudsTray is GPL-3.0 too; see [LICENSE](LICENSE).
+The protocol details come from the
+[GalaxyBudsClient](https://github.com/timschneeb/GalaxyBudsClient) project
+(GPL-3.0). BudsTray is GPL-3.0 too; see [LICENSE](LICENSE).
