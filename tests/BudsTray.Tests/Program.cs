@@ -80,6 +80,97 @@ Check("STATUS_UPDATED keeps the ear type from the extended frame", statusOnly?.E
 Check("STATUS_UPDATED does not guess an unknown model",
     BatteryStatus.FromFrame(new SppFrame(MsgIds.StatusUpdated, legacyStatusPayload, false))?.EarType is null);
 
+// 2b. The original Galaxy Buds use a different SPP UUID and a legacy frame
+// layout; Buds+ and Buds Live/Pro use the standard UUID with modern frames.
+Check("legacy SPP UUID is a candidate",
+    BudsClient.ServiceCandidates.Any(c =>
+        c.Uuid == BudsClient.SppLegacyServiceUuid && c.Transport == SppTransport.Legacy));
+Check("standard SPP UUID uses modern frames",
+    BudsClient.ServiceCandidates.Any(c =>
+        c.Uuid == BudsClient.SppStandardServiceUuid && c.Transport == SppTransport.Modern));
+
+var legacyManagerInfo = SppProtocol.Encode(
+    MsgIds.ManagerInfo, new byte[] { 1, 1, 34 }, transport: SppTransport.Legacy);
+Check("legacy frame uses FE/EE markers",
+    legacyManagerInfo[0] == SppProtocol.LegacySom && legacyManagerInfo[^1] == SppProtocol.LegacyEom);
+Check("legacy frame has type and size bytes",
+    legacyManagerInfo[1] == 0 && legacyManagerInfo[2] == 6,
+    $"{legacyManagerInfo[1]}/{legacyManagerInfo[2]}");
+var legacyRoundTrip = new SppProtocol.StreamParser(SppTransport.Legacy).Feed(legacyManagerInfo);
+Check("legacy frame round-trip",
+    legacyRoundTrip.Count == 1 &&
+    legacyRoundTrip[0].Transport == SppTransport.Legacy &&
+    legacyRoundTrip[0].Payload.SequenceEqual(new byte[] { 1, 1, 34 }));
+
+// Original Buds status: earType, L, R, coupled, main, wear state.
+var budsStatus = BatteryStatus.FromFrame(new SppFrame(
+    MsgIds.StatusUpdated, new byte[] { 0, 77, 66, 1, 0, 17 }, false, SppTransport.Legacy));
+Check("original Buds battery", budsStatus is { Left: 77, Right: 66, Case: 0, EarType: 0 });
+Check("original Buds has no case reading", budsStatus?.CaseReported == false);
+Check("original Buds is not single-bud", budsStatus is { IsSingleBud: false });
+
+// Original Buds extended frame: revision, earType, L, R, ... no case.
+var budsExtended = new byte[13];
+budsExtended[0] = 3;
+budsExtended[1] = 0;
+budsExtended[2] = 80;
+budsExtended[3] = 70;
+budsExtended[7] = 1;
+var budsExtendedStatus = BatteryStatus.FromFrame(new SppFrame(
+    MsgIds.ExtendedStatusUpdated, budsExtended, false, SppTransport.Legacy));
+Check("original Buds extended battery",
+    budsExtendedStatus is { Left: 80, Right: 70, Case: 0, EarType: 0 });
+
+// Buds+ reports the case level but has no charging flags.
+var plusExtended = new byte[24];
+plusExtended[0] = 13;
+plusExtended[1] = 1;
+plusExtended[2] = 55;
+plusExtended[3] = 65;
+plusExtended[6] = 0x11;
+plusExtended[7] = 42;
+var plusStatus = BatteryStatus.FromFrame(
+    new SppFrame(MsgIds.ExtendedStatusUpdated, plusExtended, false));
+Check("Buds+ case is read", plusStatus is { Case: 42, Left: 55, Right: 65 });
+Check("Buds+ has no charging flags", plusStatus is { LeftCharging: false, CaseCharging: false });
+Check("Buds+ placement is read", plusStatus is { LeftPresent: true, RightPresent: true });
+
+// A Buds+ STATUS frame is only 7 bytes and used to be ignored completely.
+var plusOnly = BatteryStatus.FromFrame(
+    new SppFrame(MsgIds.StatusUpdated, new byte[] { 13, 55, 65, 1, 0, 0x11, 42 }, false),
+    previousEarType: 1);
+Check("Buds+ status frame is parsed", plusOnly is { Left: 55, Right: 65, Case: 42 });
+
+// The charging bitfield moved between generations.
+byte[] ExtendedWith(int earType, int revision, int offset, byte value, int length)
+{
+    var payload = new byte[length];
+    payload[0] = (byte)revision;
+    payload[1] = (byte)earType;
+    payload[2] = 90;
+    payload[3] = 80;
+    payload[6] = 0x11;
+    payload[7] = 50;
+    payload[offset] = value;
+    return payload;
+}
+
+Check("Buds2 charging is read at offset 36",
+    BatteryStatus.FromFrame(new SppFrame(MsgIds.ExtendedStatusUpdated,
+        ExtendedWith(4, 10, 36, 0x01, 40), false)) is { CaseCharging: true });
+Check("Buds2 charging is ignored before revision 10",
+    BatteryStatus.FromFrame(new SppFrame(MsgIds.ExtendedStatusUpdated,
+        ExtendedWith(4, 9, 36, 0x01, 40), false)) is { CaseCharging: false });
+Check("Buds2 Pro charging is read at offset 43",
+    BatteryStatus.FromFrame(new SppFrame(MsgIds.ExtendedStatusUpdated,
+        ExtendedWith(5, 11, 43, 0x04, 46), false)) is { RightCharging: true });
+Check("Buds3 charging is read at offset 42",
+    BatteryStatus.FromFrame(new SppFrame(MsgIds.ExtendedStatusUpdated,
+        ExtendedWith(8, 2, 42, 0x10, 46), false)) is { LeftCharging: true });
+Check("Buds FE charging is read at offset 43",
+    BatteryStatus.FromFrame(new SppFrame(MsgIds.ExtendedStatusUpdated,
+        ExtendedWith(6, 1, 43, 0x10, 46), false)) is { LeftCharging: true });
+
 // 3. Encode ManagerInfo and round-trip it.
 var managerInfo = SppProtocol.Encode(MsgIds.ManagerInfo, new byte[] { 1, 1, 34 });
 Check("ManagerInfo frame length", managerInfo.Length == 10, managerInfo.Length.ToString());

@@ -15,14 +15,38 @@ public enum ConnectionState
     Connected
 }
 
+/// <summary>One SPP service UUID and the frame layout that belongs to it.</summary>
+public sealed record BudsService(Guid Uuid, SppTransport Transport);
+
 /// <summary>
 /// Owns the RFCOMM/SPP connection to the earbuds, reconnects with backoff and
 /// raises battery updates parsed from status frames.
 /// </summary>
 public sealed class BudsClient : IDisposable
 {
-    /// <summary>Samsung's SPP service UUID (also used by GalaxyBudsClient).</summary>
+    /// <summary>New SPP UUID: Buds2, Buds2 Pro, Buds FE, Buds Core, Buds3/3 Pro/3 FE, Buds4/4 Pro.</summary>
     public static readonly Guid SppServiceUuid = new("2e73a4ad-332d-41fc-90e2-16bef06523f2");
+
+    /// <summary>Standard SPP UUID: Buds+, Buds Live and Buds Pro.</summary>
+    public static readonly Guid SppStandardServiceUuid = new("00001101-0000-1000-8000-00805f9b34fb");
+
+    /// <summary>Legacy UUID used by the original Galaxy Buds (2019).</summary>
+    public static readonly Guid SppLegacyServiceUuid = new("00001102-0000-1000-8000-00805f9b34fd");
+
+    /// <summary>Some Bluetooth stacks expose the 0x1102 service on the standard base UUID.</summary>
+    public static readonly Guid SppLegacyStandardServiceUuid = new("00001102-0000-1000-8000-00805f9b34fb");
+
+    /// <summary>
+    /// Every service a Galaxy Buds generation may advertise, in the order they
+    /// are preferred. The frame layout differs only for the original Buds.
+    /// </summary>
+    public static readonly IReadOnlyList<BudsService> ServiceCandidates = new[]
+    {
+        new BudsService(SppServiceUuid, SppTransport.Modern),
+        new BudsService(SppStandardServiceUuid, SppTransport.Modern),
+        new BudsService(SppLegacyServiceUuid, SppTransport.Legacy),
+        new BudsService(SppLegacyStandardServiceUuid, SppTransport.Legacy)
+    };
 
     private readonly AppConfig _config;
     private readonly object _gate = new();
@@ -34,6 +58,7 @@ public sealed class BudsClient : IDisposable
     private DataWriter? _writer;
     private Stream? _readStream;
     private RfcommDeviceService? _service;
+    private SppTransport _transport = SppTransport.Modern;
 
     public event Action<BatteryStatus>? BatteryUpdated;
     public event Action<ConnectionState, string?>? StateChanged;
@@ -217,16 +242,14 @@ public sealed class BudsClient : IDisposable
         RememberDevice(device);
         Log.Info($"Connecting to {device.Name} ({device.BluetoothAddress:X12})");
 
-        var services = await WithTimeout(
-                device.GetRfcommServicesForIdAsync(RfcommServiceId.FromUuid(SppServiceUuid), BluetoothCacheMode.Uncached).AsTask(),
-                10, "SPP service discovery", ct)
-            .ConfigureAwait(false);
+        var match = await FindSppServiceAsync(device, BluetoothCacheMode.Uncached, ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException(
+                        "No Galaxy Buds SPP service was found. Open the case, make sure the Buds are awake and paired, then click Reconnect.");
 
-        if (services.Services.Count == 0)
-            throw new InvalidOperationException(
-                "The Buds' SPP service was not found. Open the case, make sure the Buds are awake and paired, then click Reconnect.");
+        _service = match.Service;
+        _transport = match.Transport;
+        Log.Info($"Using SPP service {match.Uuid} ({_transport} frame format)");
 
-        _service = services.Services[0];
         _socket = new StreamSocket();
         await WithTimeout(
                 _socket.ConnectAsync(_service.ConnectionHostName, _service.ConnectionServiceName).AsTask(),
@@ -243,7 +266,7 @@ public sealed class BudsClient : IDisposable
 
         await SendManagerInfoAsync().ConfigureAwait(false);
 
-        var parser = new SppProtocol.StreamParser();
+        var parser = new SppProtocol.StreamParser(_transport);
         var buffer = new byte[4096];
         var managerSentOnStatus = false;
 
@@ -345,11 +368,11 @@ public sealed class BudsClient : IDisposable
         {
             ct.ThrowIfCancellationRequested();
 
-            var cached = await HasSppServiceAsync(device, BluetoothCacheMode.Cached, ct).ConfigureAwait(false);
-            var uncached = cached || await HasSppServiceAsync(device, BluetoothCacheMode.Uncached, ct).ConfigureAwait(false);
-            Log.Info($"SPP check on {device.Name}: cached={cached}, uncached={uncached}");
+            var cached = await FindSppServiceAsync(device, BluetoothCacheMode.Cached, ct).ConfigureAwait(false);
+            var match = cached ?? await FindSppServiceAsync(device, BluetoothCacheMode.Uncached, ct).ConfigureAwait(false);
+            Log.Info($"SPP check on {device.Name}: {(match is null ? "none" : match.Value.Uuid.ToString())}");
 
-            if (cached || uncached)
+            if (match != null)
             {
                 Log.Info($"Selected {device.Name} ({device.BluetoothAddress:X12})");
                 return device;
@@ -363,14 +386,28 @@ public sealed class BudsClient : IDisposable
                    "No paired Galaxy Buds found. Pair them in Windows Settings > Bluetooth, then click Reconnect.");
     }
 
-    private static async Task<bool> HasSppServiceAsync(BluetoothDevice device, BluetoothCacheMode cacheMode, CancellationToken ct)
+    /// <summary>
+    /// Looks for any known Galaxy Buds SPP service on the device. All generations
+    /// expose one of these UUIDs, and the matched UUID also selects the frame
+    /// layout used by the original Buds.
+    /// </summary>
+    private static async Task<(RfcommDeviceService Service, Guid Uuid, SppTransport Transport)?> FindSppServiceAsync(
+        BluetoothDevice device,
+        BluetoothCacheMode cacheMode,
+        CancellationToken ct)
     {
         try
         {
             var result = await WithTimeout(
-                device.GetRfcommServicesForIdAsync(RfcommServiceId.FromUuid(SppServiceUuid), cacheMode).AsTask(),
+                device.GetRfcommServicesAsync(cacheMode).AsTask(),
                 5, $"SPP service query ({cacheMode})", ct).ConfigureAwait(false);
-            return result.Services.Count > 0;
+
+            foreach (var service in result.Services)
+            {
+                var uuid = service.ServiceId.Uuid;
+                var candidate = ServiceCandidates.FirstOrDefault(c => c.Uuid == uuid);
+                if (candidate != null) return (service, candidate.Uuid, candidate.Transport);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -378,8 +415,10 @@ public sealed class BudsClient : IDisposable
         }
         catch
         {
-            return false;
+            // The device may be asleep; the caller retries or falls back to the name.
         }
+
+        return null;
     }
 
     private static async Task<T> WithTimeout<T>(Task<T> task, int seconds, string operation, CancellationToken ct)
@@ -430,13 +469,20 @@ public sealed class BudsClient : IDisposable
     }
 
     /// <summary>
-    /// Asks the earbuds for fresh battery data. The Buds FE answers
-    /// <c>DEBUG_GET_ALL_DATA</c> with a 108-byte reply that contains the live
-    /// earbud SOC values (the same query GalaxyBudsClient uses for its debug
-    /// page), so polling it every 15 s keeps the tray current without touching
-    /// the connection. Pushed status frames still arrive immediately.
+    /// Asks the earbuds for fresh battery data. Buds2 and newer answer
+    /// <c>DEBUG_GET_ALL_DATA</c> with a reply that contains the live earbud SOC
+    /// values; the original Buds only understands the manager handshake, which
+    /// makes them push a status frame. Polling every 15 s keeps the tray current
+    /// without touching the connection. Pushed status frames still arrive
+    /// immediately.
     /// </summary>
-    public Task RequestStatusAsync() => SendMessageAsync(MsgIds.DebugGetAllData);
+    public async Task RequestStatusAsync()
+    {
+        if (_transport == SppTransport.Legacy)
+            await SendManagerInfoAsync().ConfigureAwait(false);
+        else
+            await SendMessageAsync(MsgIds.DebugGetAllData).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Switches the buds between ANC, Ambient Sound, Adaptive and Off. Models
@@ -471,7 +517,7 @@ public sealed class BudsClient : IDisposable
             try
             {
                 var writer = _writer ?? throw new InvalidOperationException("Not connected.");
-                writer.WriteBytes(SppProtocol.Encode(id, payload));
+                writer.WriteBytes(SppProtocol.Encode(id, payload, transport: _transport));
                 await writer.StoreAsync().AsTask().ConfigureAwait(false);
             }
             finally
@@ -491,7 +537,8 @@ public sealed class BudsClient : IDisposable
     private async Task SendManagerInfoCoreAsync()
     {
         // Same handshake as GalaxyBudsClient: version, client type (Samsung), Android SDK.
-        var frame = SppProtocol.Encode(MsgIds.ManagerInfo, new byte[] { 1, 1, 34 });
+        var frame = SppProtocol.Encode(
+            MsgIds.ManagerInfo, new byte[] { 1, 1, 34 }, transport: _transport);
         var writer = _writer ?? throw new InvalidOperationException("Not connected.");
         writer.WriteBytes(frame);
         await writer.StoreAsync().AsTask().ConfigureAwait(false);

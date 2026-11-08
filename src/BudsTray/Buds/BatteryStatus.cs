@@ -43,29 +43,55 @@ public sealed record BatteryStatus(
     {
         var p = frame.Payload;
         var now = DateTimeOffset.Now;
+        var isLegacyBuds = frame.Transport == SppTransport.Legacy;
 
-        if (frame.Id == MsgIds.StatusUpdated && p.Length >= 8)
+        if (frame.Id == MsgIds.StatusUpdated)
         {
-            // L, R, coupled, main, placement, case, charging. On the original
-            // Buds payload[0] is the ear type, but on every newer model it is
-            // the frame revision, so only an extended frame may set the model.
-            return Create(p[1], p[2], p[6], p[7], now, earType: previousEarType);
+            // The original Galaxy Buds reports earType, L, R, coupled, main and a
+            // legacy wear state. It has no case level and no charging flags.
+            if (isLegacyBuds)
+            {
+                if (p.Length < 6) return null;
+                return Create(p[1], p[2], 0, 0, now,
+                    earType: p[0] <= 12 ? p[0] : null);
+            }
+
+            // Buds+ and newer: revision, L, R, coupled, main, placement, case[, charging].
+            // payload[0] is the revision here, not the ear type, so only an
+            // extended frame may set the model.
+            if (p.Length < 7) return null;
+
+            var type = previousEarType;
+            var placement = p[5];
+            var hasPlacement = type is >= 1;
+            var charging = SupportsStatusCharging(type, p[0]) && p.Length > 7
+                ? p[7]
+                : (byte)0;
+
+            return Create(p[1], p[2], p[6], charging, now,
+                !hasPlacement || IsBudPresent((placement >> 4) & 0x0F),
+                !hasPlacement || IsBudPresent(placement & 0x0F),
+                type);
         }
 
         if (frame.Id == MsgIds.ExtendedStatusUpdated && p.Length >= 8)
         {
             // revision, earType, L, R, coupled, main, placement, case, ...
-            // On Buds FE the charging bitfield sits at offset 43.
-            var charging = p.Length > 43 ? p[43] : (byte)0;
+            var revision = p[0];
+            var earType = p[1] <= 12 ? p[1] : (int?)null;
+
+            // The original Buds stores a wear state instead of placement and
+            // does not report the case level or charging flags.
+            if (earType == 0)
+                return Create(p[2], p[3], 0, 0, now, earType: earType);
 
             // Placement is a nibble per bud: 0 disconnected, 1 wearing,
             // 2 idle (out of the case), 3 in the case, 4 case closed.
             var placement = p[6];
-            var leftPlacement = (placement >> 4) & 0x0F;
-            var rightPlacement = placement & 0x0F;
-
-            return Create(p[2], p[3], p[7], charging, now,
-                IsBudPresent(leftPlacement), IsBudPresent(rightPlacement), p[1]);
+            return Create(p[2], p[3], p[7], ReadCharging(p, earType, revision), now,
+                IsBudPresent((placement >> 4) & 0x0F),
+                IsBudPresent(placement & 0x0F),
+                earType);
         }
 
         return null;
@@ -73,6 +99,38 @@ public sealed record BatteryStatus(
 
     /// <summary>A bud is "present" only when it is out of the case (worn or idle).</summary>
     private static bool IsBudPresent(int placement) => placement is 1 or 2;
+
+    /// <summary>
+    /// Charging flags exist only from Buds2 onwards, and status frames before the
+    /// firmware revision that added them do not carry the byte.
+    /// </summary>
+    private static bool SupportsStatusCharging(int? earType, int revision) => earType switch
+    {
+        4 => revision >= 10,
+        5 => revision >= 11,
+        >= 6 and <= 12 => true,
+        _ => false
+    };
+
+    /// <summary>
+    /// The extended status frame keeps the charging bitfield at a different
+    /// offset on almost every generation. Ear types follow the protocol order:
+    /// 4 Buds2, 5 Buds2 Pro, 6 Buds FE, 7 Buds Core, 8 Buds3, 9 Buds3 Pro,
+    /// 10 Buds3 FE, 11 Buds4, 12 Buds4 Pro.
+    /// </summary>
+    private static byte ReadCharging(byte[] payload, int? earType, int revision)
+    {
+        var offset = earType switch
+        {
+            4 => revision >= 10 ? 36 : (int?)null,
+            5 => revision >= 11 ? 43 : null,
+            6 or 7 or 10 => 43,
+            8 or 9 or 11 or 12 => 42,
+            _ => null
+        };
+
+        return offset is { } index && index < payload.Length ? payload[index] : (byte)0;
+    }
 
     /// <summary>
     /// Refreshes the earbud levels from a Buds FE <c>DEBUG_GET_ALL_DATA</c> reply.
