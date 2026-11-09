@@ -53,7 +53,8 @@ dotnet run --project .\tests\BudsTray.Tests\BudsTray.Tests.csproj -c Release
 
 Hover over the icon to see the battery levels, for example
 `L 80% · R 75% · Case 40%`. Right-click for the levels, the sound modes the
-connected model supports, and **Exit**.
+connected model supports, **Start with Windows** (ticked when enabled), and
+**Exit**.
 
 The icon turns red at 15% or below. When the buds report placement and only one
 is out of the case, only that bud is shown. A slash indicates a disconnected
@@ -80,6 +81,9 @@ options:
 - `ShowPercentage` – show the battery percentage inside the tray icon.
 - `Theme` – `System`, `Light` or `Dark` menu theme.
 
+**Start with Windows** is stored in the current user's Run key, not in the
+configuration file.
+
 Logs are written to `data\budstray.log`.
 
 ## Troubleshooting
@@ -90,8 +94,8 @@ Logs are written to `data\budstray.log`.
   nearby.
 - **No sound modes:** they appear once the buds report their model. Adaptive is
   available only on Buds3 Pro, Buds4 and Buds4 Pro.
-- **No icon after login:** create a shortcut to `BudsTray.exe` in the startup
-  folder (`Win+R` → `shell:startup`).
+- **No icon after login:** run BudsTray once, then tick **Start with Windows** in
+  the right-click menu.
 - **Renamed buds:** no action needed; detection uses the Bluetooth service, not
   the device name.
 

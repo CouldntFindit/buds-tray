@@ -7,7 +7,7 @@ namespace BudsTray;
 
 /// <summary>
 /// The tray menu: Left, Right and Case percentages, the sound modes the
-/// connected model supports, and Exit. It is a plain
+/// connected model supports, Start with Windows, and Exit. It is a plain
 /// <see cref="ContextMenuStrip"/> with a custom renderer so it can follow the
 /// app theme instead of always drawing the light system chrome.
 /// </summary>
@@ -32,7 +32,8 @@ internal sealed class TrayMenu : ContextMenuStrip
     private readonly ModeRow _offRow = new(NoiseControlMode.Off);
 
     private readonly ToolStripSeparator _batterySeparator = new();
-    private readonly ToolStripSeparator _noiseSeparator = new();
+    private readonly ToolStripSeparator _settingsSeparator = new();
+    private readonly ToggleRow _startupRow = new("Start with Windows");
     private readonly ToolStripMenuItem _exitItem = new("Exit");
 
     private MenuTheme _theme = MenuTheme.Dark;
@@ -68,7 +69,8 @@ internal sealed class TrayMenu : ContextMenuStrip
             _ambientRow,
             _adaptiveRow,
             _offRow,
-            _noiseSeparator,
+            _settingsSeparator,
+            _startupRow,
             _exitItem
         });
 
@@ -76,6 +78,7 @@ internal sealed class TrayMenu : ContextMenuStrip
         _ambientRow.Click += (_, _) => SelectMode(_ambientRow);
         _adaptiveRow.Click += (_, _) => SelectMode(_adaptiveRow);
         _offRow.Click += (_, _) => SelectMode(_offRow);
+        _startupRow.Click += (_, _) => ToggleStartup();
 
         _exitItem.Padding = new Padding(10, 1, 10, 1);
         _exitItem.Click += (_, _) => exit();
@@ -84,6 +87,8 @@ internal sealed class TrayMenu : ContextMenuStrip
         {
             ApplyTheme();
             RefreshValues();
+            _startupRow.Active = StartupManager.IsEnabled();
+            _startupRow.Invalidate();
         };
 
         ApplyTheme();
@@ -121,11 +126,10 @@ internal sealed class TrayMenu : ContextMenuStrip
         SetModeRow(_adaptiveRow, support, connected, current);
         SetModeRow(_offRow, support, connected, current);
 
-        var visible = support != NoiseControlSupport.None;
         _batterySeparator.Visible = true;
         _batterySeparator.Available = true;
-        _noiseSeparator.Visible = visible;
-        _noiseSeparator.Available = visible;
+        _settingsSeparator.Visible = true;
+        _settingsSeparator.Available = true;
     }
 
     private void SelectMode(ModeRow row)
@@ -133,6 +137,12 @@ internal sealed class TrayMenu : ContextMenuStrip
         if (!row.Enabled || !_connected()) return;
 
         _setNoiseMode(row.Mode);
+    }
+
+    private void ToggleStartup()
+    {
+        _startupRow.Active = StartupManager.Toggle();
+        _startupRow.Invalidate();
     }
 
     private void SetRow(BatteryRow row, bool connected, int? value, bool charging)
@@ -190,6 +200,7 @@ internal sealed class TrayMenu : ContextMenuStrip
         _adaptiveRow.Theme = theme;
         _offRow.Theme = theme;
 
+        _startupRow.Theme = theme;
         _exitItem.BackColor = theme.Background;
         _exitItem.ForeColor = theme.Text;
     }
@@ -247,22 +258,18 @@ internal sealed class TrayMenu : ContextMenuStrip
     }
 
     /// <summary>
-    /// A clickable sound-mode row. It paints its own hover state and marks the
-    /// active mode with a check on the right, which keeps the same alignment as
-    /// the battery rows regardless of the system check margin.
+    /// A clickable row that paints its own hover state and marks the active
+    /// choice with a check on the right, which keeps the same alignment as the
+    /// battery rows regardless of the system check margin.
     /// </summary>
-    private sealed class ModeRow : ToolStripMenuItem
+    private class CheckRow : ToolStripMenuItem
     {
-        public ModeRow(NoiseControlMode mode) : base(NoiseControl.Label(mode))
+        protected CheckRow(string text) : base(text)
         {
-            Mode = mode;
             AutoSize = true;
             ShowShortcutKeys = true;
             ShortcutKeyDisplayString = "000000000000";
         }
-
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public NoiseControlMode Mode { get; }
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public MenuTheme Theme { get; set; } = MenuTheme.Dark;
@@ -295,6 +302,19 @@ internal sealed class TrayMenu : ContextMenuStrip
                 TextRenderer.DrawText(graphics, "✓", Font, textBounds,
                     Theme.Accent, flags | TextFormatFlags.Right);
         }
+    }
+
+    private sealed class ModeRow : CheckRow
+    {
+        public ModeRow(NoiseControlMode mode) : base(NoiseControl.Label(mode)) => Mode = mode;
+
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public NoiseControlMode Mode { get; }
+    }
+
+    private sealed class ToggleRow : CheckRow
+    {
+        public ToggleRow(string text) : base(text) { }
     }
 
     private sealed record MenuTheme(

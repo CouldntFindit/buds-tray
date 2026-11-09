@@ -245,6 +245,20 @@ Check("Galaxy Buds app takeover can be disabled", optOutConfig?.TakeOverFromGala
 Check("takeover stops QuickControls before BudsManager",
     GalaxyBudsApp.ProcessNames.SequenceEqual(new[] { "QuickControls", "BudsManager" }));
 
+// Start with Windows stores a quoted command so paths with spaces work, and a
+// stale entry from an old location is not treated as enabled.
+const string installPath = @"C:\Program Files\BudsTray\BudsTray.exe";
+Check("startup command quotes the executable",
+    StartupManager.BuildCommand(installPath) == $"\"{installPath}\"");
+Check("startup command matches the same executable",
+    StartupManager.Matches(StartupManager.BuildCommand(installPath), installPath));
+Check("startup command ignores case",
+    StartupManager.Matches($"\"{installPath.ToLowerInvariant()}\"", installPath));
+Check("startup command rejects another location",
+    !StartupManager.Matches("\"C:\\Old\\BudsTray.exe\"", installPath));
+Check("startup command rejects an empty entry",
+    !StartupManager.Matches(null, installPath));
+
 // 9. The disconnected glyph carries a slash, so it cannot be mistaken for a
 // real 0 % battery (which is just the empty shell).
 using (var disconnectedIcon = TrayIconRenderer.Render(
